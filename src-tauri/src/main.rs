@@ -1,9 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod analyzer;
-mod commands;
-mod types;
-mod utils;
+use image_analyzer::commands;
 
 fn main() {
     tauri::Builder::default()

@@ -1784,8 +1784,10 @@ name = "image-analyzer"
 version = "0.1.0"
 dependencies = [
  "byteorder",
+ "crc32fast",
  "image",
  "kamadak-exif",
+ "miniz_oxide",
  "mp4parse",
  "png 0.17.16",
  "quick-xml 0.37.5",
