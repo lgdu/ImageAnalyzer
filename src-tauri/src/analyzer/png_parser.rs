@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::types::{FileBlock, ImageAnalysis, ImageFormat, MetadataEntry};
 use crate::utils::{bytes_to_hex, read_file_bytes};
 
@@ -32,8 +30,6 @@ const CHUNK_SBIT: &[u8; 4] = b"sBIT";
 const CHUNK_BKGD: &[u8; 4] = b"bKGD";
 #[allow(dead_code)]
 const CHUNK_TRNS: &[u8; 4] = b"tRNS";
-#[allow(dead_code)]
-const CHUNK_SRGB_RENDERING: &[u8; 4] = b"sRGB";
 
 /// PNG color type names
 fn color_type_name(ct: u8) -> &'static str {
@@ -355,10 +351,6 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
     let mut color_type: u8 = 0;
     let mut bit_depth: u8 = 0;
     let mut has_alpha: bool = false;
-    let mut _gamma: Option<f64> = None;
-    let mut _idat_count: u32 = 0;
-    let mut _total_idat_size: u64 = 0;
-    let mut chunk_counts: HashMap<String, u32> = HashMap::new();
 
     // Parse chunks starting after the 8-byte signature
     let mut pos: usize = 8;
@@ -409,9 +401,6 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
                 // Build data preview
                 let data_preview = Some(build_data_preview(chunk_data));
 
-                // Track chunk counts
-                *chunk_counts.entry(name.clone()).or_insert(0) += 1;
-
                 // Extract IHDR info (first chunk, mandatory)
                 if name.as_bytes() == *CHUNK_IHDR {
                     if let Some(ihdr) = decode_ihdr(chunk_data) {
@@ -421,17 +410,6 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
                         color_type = ihdr.color_type;
                         has_alpha = color_type_has_alpha(ihdr.color_type);
                     }
-                }
-
-                // Extract gamma
-                if name.as_bytes() == *CHUNK_GAMA {
-                    _gamma = decode_gamma(chunk_data);
-                }
-
-                // Count IDAT chunks
-                if name.as_bytes() == *CHUNK_IDAT {
-                    _idat_count += 1;
-                    _total_idat_size += data_length as u64;
                 }
 
                 // Extract text metadata
@@ -502,18 +480,6 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
 
     // Determine color type string
     let color_type_str = color_type_name(color_type);
-
-    // Build codec syntax info with chunk-level summary
-    let mut chunk_summary = chunk_counts
-        .iter()
-        .map(|(k, v)| format!("{}: {}", k, v))
-        .collect::<Vec<_>>();
-    chunk_summary.sort();
-    let _codec_syntax_summary = if chunk_summary.is_empty() {
-        None
-    } else {
-        Some(chunk_summary.join(", "))
-    };
 
     Ok(ImageAnalysis {
         file_name,
