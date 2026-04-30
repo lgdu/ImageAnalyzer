@@ -11,7 +11,7 @@ pub enum ImageFormat {
     Heic,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ImageAnalysis {
     pub file_name: String,
     pub file_path: String,
@@ -31,7 +31,7 @@ pub struct ImageAnalysis {
     pub analysis_errors: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct FileBlock {
     pub name: String,
     pub offset: u64,
@@ -41,7 +41,7 @@ pub struct FileBlock {
     pub children: Vec<FileBlock>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct MetadataEntry {
     pub standard: String,
     pub tag_name: String,
@@ -49,14 +49,14 @@ pub struct MetadataEntry {
     pub raw_value: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ColorMode {
     Rgb,
     Yuv,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ChannelData {
     pub rgb: Option<RgbChannels>,
     pub yuv: Option<YuvChannels>,
@@ -66,7 +66,7 @@ pub struct ChannelData {
     pub color_matrix: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct RgbChannels {
     pub r: SingleChannel,
     pub g: SingleChannel,
@@ -74,14 +74,14 @@ pub struct RgbChannels {
     pub a: Option<SingleChannel>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct YuvChannels {
     pub y: SingleChannel,
     pub cb: SingleChannel,
     pub cr: SingleChannel,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct SingleChannel {
     pub name: String,
     pub min: u8,
@@ -91,20 +91,20 @@ pub struct SingleChannel {
     pub std_dev: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Histogram {
     pub channel: String,
     pub bins: Vec<u64>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CodecSyntax {
     Hevc(HevcSyntax),
     Av1(Av1Syntax),
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct HevcSyntax {
     pub nal_units: Vec<NalUnit>,
     pub vps: Option<VideoParameterSet>,
@@ -113,7 +113,7 @@ pub struct HevcSyntax {
     pub slice_headers: Vec<HevcSliceHeader>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct NalUnit {
     pub nal_type: String,
     pub nuh_layer_id: u8,
@@ -122,7 +122,7 @@ pub struct NalUnit {
     pub offset: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct HevcSliceHeader {
     pub slice_type: u8,
     pub first_slice_segment_in_pic_flag: bool,
@@ -136,14 +136,14 @@ pub struct HevcSliceHeader {
     pub tile_enabled: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct VideoParameterSet {
     pub vps_id: u8,
     pub max_layers: u8,
     pub max_sub_layers: u8,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct SequenceParameterSet {
     pub profile: String,
     pub level: String,
@@ -153,13 +153,13 @@ pub struct SequenceParameterSet {
     pub bit_depth: u8,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct PictureParameterSet {
     pub pps_id: u8,
     pub sps_id: u8,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Av1Syntax {
     pub obus: Vec<Obu>,
     pub sequence_header: Option<SequenceHeader>,
@@ -167,7 +167,7 @@ pub struct Av1Syntax {
     pub tile_info: Option<Av1TileInfo>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Obu {
     pub obu_type: String,
     pub obu_size: usize,
@@ -176,7 +176,7 @@ pub struct Obu {
     pub offset: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct SequenceHeader {
     pub profile: u8,
     pub level: String,
@@ -187,12 +187,12 @@ pub struct SequenceHeader {
     pub color_config: Option<ColorConfig>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ColorConfig {
     pub matrix_coefficients: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Av1FrameHeader {
     pub frame_type: String,
     pub show_frame: bool,
@@ -202,14 +202,14 @@ pub struct Av1FrameHeader {
     pub quantizer_params: Option<QuantizerParams>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct QuantizerParams {
     pub base_q_idx: u8,
     pub delta_q_present: bool,
     pub delta_q_res: u8,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Av1TileInfo {
     pub num_tiles: u32,
     pub rows: u32,
@@ -219,7 +219,7 @@ pub struct Av1TileInfo {
     pub context_update_tile_id: Option<u32>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct GridInfo {
     pub rows: u32,
     pub cols: u32,
@@ -228,7 +228,7 @@ pub struct GridInfo {
     pub tiles: Vec<GridTile>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct GridTile {
     pub item_id: u16,
     pub width: u32,
@@ -238,7 +238,7 @@ pub struct GridTile {
     pub codec: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct IccInfo {
     pub size: u32,
     pub cmm_type: String,
@@ -263,7 +263,7 @@ pub struct IccInfo {
     pub raw_base64: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct PrimariesInfo {
     pub red_x: f64,
     pub red_y: f64,
@@ -279,12 +279,12 @@ pub struct PrimariesInfo {
     pub white_z: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct Matrix3x3 {
     pub m: [[f64; 3]; 3],
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct LutInfo {
     pub name: String,
     pub clut_points: Option<u8>,
@@ -292,7 +292,7 @@ pub struct LutInfo {
     pub output_channels: u8,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct IccTag {
     pub name: String,
     pub offset: u32,
