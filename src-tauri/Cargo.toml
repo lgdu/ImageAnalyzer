@@ -1,0 +1,21 @@
+[package]
+name = "image-analyzer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = "0.25"
+kamadak-exif = "0.6"
+png = "0.17"
+byteorder = "1"
+mp4parse = "0.17"
+quick-xml = "0.37"
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
