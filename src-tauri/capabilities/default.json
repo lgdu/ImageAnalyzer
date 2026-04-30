@@ -3,6 +3,13 @@
   "description": "Default capability for file analysis",
   "windows": ["main"],
   "permissions": [
-    "core:default"
-  ]
+    "core:default",
+    "fs:allow-read-file",
+    "dialog:allow-open"
+  ],
+  "scope": {
+    "fs": {
+      "allow": [{ "path": "**" }]
+    }
+  }
 }
