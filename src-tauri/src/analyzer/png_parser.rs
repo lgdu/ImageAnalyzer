@@ -330,8 +330,12 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
     let bytes = read_file_bytes(path)?;
     let file_size = bytes.len() as u64;
 
-    // Extract file name from path
-    let file_name = path.split('/').next_back().unwrap_or("unknown").to_string();
+    // Extract file name from path (cross-platform)
+    let file_name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
 
     // Verify PNG signature
     if bytes.len() < 8 {
