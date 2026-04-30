@@ -58,6 +58,11 @@
     outline: 1px solid var(--color-accent);
   }
 
+  .thumbnail-card:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
   .info {
     display: flex;
     flex-direction: column;

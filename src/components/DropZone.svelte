@@ -9,21 +9,28 @@
   const ACCEPTED_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif', '.heic', '.heif'];
 
   async function handlePaths(paths: string[]) {
-    store.error = null;
     store.isAnalyzing = true;
+    const errors: string[] = [];
 
     for (const filePath of paths) {
+      // Deduplicate: skip files already in the list
+      if (store.fileList.some(f => f.file_path === filePath)) continue;
+
       try {
         const result: ImageAnalysis = await invoke('analyze_image', { filePath });
         store.fileList.push(result);
-        if (store.fileList.length === 1) {
+        if (store.currentImage === null) {
           store.currentImage = result;
         }
+        store.error = null; // clear error on success
       } catch (e: unknown) {
-        store.error = e instanceof Error ? e.message : String(e);
+        errors.push(e instanceof Error ? e.message : String(e));
       }
     }
 
+    if (errors.length > 0) {
+      store.error = errors.join('; ');
+    }
     store.isAnalyzing = false;
   }
 
@@ -89,7 +96,10 @@
         const ext = '.' + file.name.split('.').pop()?.toLowerCase();
         if (ACCEPTED_EXTENSIONS.includes(ext)) {
           // Use file.path if available (Tauri provides it), otherwise name
-          const filePath = (file as any).path || file.name;
+          interface TauriFile extends File {
+      path?: string;
+    }
+    const filePath = (file as TauriFile).path || file.name;
           paths.push(filePath);
         }
       }
@@ -120,7 +130,7 @@
     <div class="spinner"></div>
     <span class="label">Analyzing...</span>
   {:else}
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
       <path d="M12 16V4m0 0l-4 4m4-4l4 4" />
       <path d="M2 17l.621 2.485A2 2 0 004.561 21h14.878a2 2 0 001.94-1.515L22 17" />
     </svg>
