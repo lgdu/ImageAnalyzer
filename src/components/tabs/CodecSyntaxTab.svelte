@@ -7,8 +7,8 @@
     'hevc' in codec ? 'hevc' : 'av1'
   );
 
-  let hevc = $derived(mode === 'hevc' ? codec.hevc : null);
-  let av1 = $derived(mode === 'av1' ? codec.av1 : null);
+  let hevc = $derived(mode === 'hevc' ? (codec as { hevc: any }).hevc : null);
+  let av1 = $derived(mode === 'av1' ? (codec as { av1: any }).av1 : null);
 
   const sliceTypeNames: Record<number, string> = {
     0: 'B',

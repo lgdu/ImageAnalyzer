@@ -253,6 +253,7 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
     let mut structure: Vec<FileBlock> = Vec::new();
     let mut metadata: Vec<MetadataEntry> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    let mut icc_data: Option<Vec<u8>> = None;
 
     // Root RIFF block
     structure.push(FileBlock {
@@ -482,6 +483,7 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
             }
         } else if fourcc == CHUNK_ICCP {
             decoded_info = Some(format!("ICC profile, {} bytes", data_size));
+            icc_data = Some(chunk_data.to_vec());
         } else if fourcc == CHUNK_EXIF {
             decoded_info = Some(format!("EXIF metadata, {} bytes", data_size));
             // EXIF chunk starts with TIFF header (8 bytes):
@@ -563,8 +565,8 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
         has_alpha,
         structure,
         metadata,
-        channels: None,
-        icc_profile: None,
+        channels: crate::analyzer::channel_split::compute_channels(&bytes),
+        icc_profile: icc_data.as_ref().and_then(|d| crate::analyzer::icc_parser::parse_icc(d)),
         codec_syntax: None,
         grid: None,
         analysis_errors: errors,

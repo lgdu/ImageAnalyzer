@@ -657,6 +657,9 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
     // Build children for APP2 ICC_PROFILE blocks
     merge_icc_blocks(&mut structure);
 
+    // Extract ICC profile from APP2 blocks
+    let icc_profile = extract_jpeg_icc(&bytes);
+
     Ok(ImageAnalysis {
         file_name,
         file_path: path.to_string(),
@@ -669,8 +672,8 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
         has_alpha,
         structure,
         metadata,
-        channels: None,
-        icc_profile: None,
+        channels: crate::analyzer::channel_split::compute_channels(&bytes),
+        icc_profile,
         codec_syntax: None,
         grid: None,
         analysis_errors: errors,
@@ -749,4 +752,44 @@ fn merge_icc_blocks(structure: &mut Vec<FileBlock>) {
             structure.remove(i);
         }
     }
+}
+
+/// Extract and parse ICC profile from JPEG APP2 segments
+fn extract_jpeg_icc(bytes: &[u8]) -> Option<crate::types::IccInfo> {
+    let mut parts: Vec<(u8, Vec<u8>)> = Vec::new();
+    let mut pos = 2; // skip SOI marker
+
+    while pos + 4 < bytes.len() {
+        let marker = bytes[pos];
+        if marker != APP2 {
+            pos += 1;
+            continue;
+        }
+        if pos + 18 > bytes.len() {
+            break;
+        }
+        if &bytes[pos + 4..pos + 18] != b"ICC_PROFILE\x00" {
+            pos += 1;
+            continue;
+        }
+        let part_num = bytes[pos + 18];
+        let _total_parts = bytes[pos + 19];
+        let seg_len =
+            u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]) as usize;
+        let data_start = pos + 20;
+        let data_end = pos + seg_len;
+        if data_end > bytes.len() {
+            break;
+        }
+        parts.push((part_num, bytes[data_start..data_end].to_vec()));
+        pos = data_end;
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    parts.sort_by_key(|&(num, _)| num);
+    let icc_data: Vec<u8> = parts.into_iter().flat_map(|(_, data)| data).collect();
+    crate::analyzer::icc_parser::parse_icc(&icc_data)
 }

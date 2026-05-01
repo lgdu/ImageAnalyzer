@@ -610,7 +610,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
         has_alpha: false, // GIF89a supports transparency via transparent index, but not true alpha channel
         structure,
         metadata,
-        channels: None,
+        channels: crate::analyzer::channel_split::compute_channels(&bytes),
         icc_profile: None,
         codec_syntax: None,
         grid: None,

@@ -4,6 +4,8 @@
   import CodecSyntaxTab from './tabs/CodecSyntaxTab.svelte';
   import ColorInfoTab from './tabs/ColorInfoTab.svelte';
   import GridTab from './tabs/GridTab.svelte';
+  import MetadataTab from './tabs/MetadataTab.svelte';
+  import StructureTab from './tabs/StructureTab.svelte';
 
   const tabs = [
     { id: 'structure', label: 'Structure' },
@@ -42,9 +44,9 @@
     {#if !store.currentImage}
       <div class="placeholder">Select an image to view details</div>
     {:else if activeTab === 'structure'}
-      <div class="placeholder">Structure tree — coming next</div>
+      <StructureTab blocks={store.currentImage.structure} />
     {:else if activeTab === 'metadata'}
-      <div class="placeholder">Metadata tab — coming next</div>
+      <MetadataTab entries={store.currentImage.metadata} />
     {:else if activeTab === 'channels'}
       <ChannelsTab data={store.currentImage} />
     {:else if activeTab === 'color-info'}

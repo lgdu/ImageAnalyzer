@@ -355,6 +355,7 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
     let mut color_type: u8 = 0;
     let mut bit_depth: u8 = 0;
     let mut has_alpha: bool = false;
+    let mut icc_data: Option<Vec<u8>> = None;
 
     // Parse chunks starting after the 8-byte signature
     let mut pos: usize = 8;
@@ -450,6 +451,14 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
                     }
                 }
 
+                // Extract ICC profile data
+                if name.as_bytes() == *CHUNK_ICCP {
+                    if let Some(null_pos) = chunk_data.iter().position(|&b| b == 0) {
+                        let profile_start = data_start + null_pos + 2; // skip null + compression byte
+                        icc_data = Some(bytes[profile_start..data_end].to_vec());
+                    }
+                }
+
                 // Build the file block
                 let block = FileBlock {
                     name: name.clone(),
@@ -497,8 +506,8 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
         has_alpha,
         structure,
         metadata,
-        channels: None,
-        icc_profile: None,
+        channels: crate::analyzer::channel_split::compute_channels(&bytes),
+        icc_profile: icc_data.as_ref().and_then(|d| crate::analyzer::icc_parser::parse_icc(d)),
         codec_syntax: None,
         grid: None,
         analysis_errors: errors,
