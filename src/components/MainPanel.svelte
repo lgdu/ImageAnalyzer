@@ -1,5 +1,9 @@
 <script lang="ts">
   import { store } from '../lib/store';
+  import ChannelsTab from './tabs/ChannelsTab.svelte';
+  import CodecSyntaxTab from './tabs/CodecSyntaxTab.svelte';
+  import ColorInfoTab from './tabs/ColorInfoTab.svelte';
+  import GridTab from './tabs/GridTab.svelte';
 
   const tabs = [
     { id: 'structure', label: 'Structure' },
@@ -42,13 +46,17 @@
     {:else if activeTab === 'metadata'}
       <div class="placeholder">Metadata tab — coming next</div>
     {:else if activeTab === 'channels'}
-      <div class="placeholder">Channels tab — coming next</div>
+      <ChannelsTab data={store.currentImage} />
     {:else if activeTab === 'color-info'}
-      <div class="placeholder">Color Info tab — coming next</div>
+      <ColorInfoTab data={store.currentImage} />
     {:else if activeTab === 'codec-syntax'}
-      <div class="placeholder">Codec Syntax tab — coming next</div>
+      {#if store.currentImage?.codec_syntax}
+        <CodecSyntaxTab codec={store.currentImage.codec_syntax} />
+      {:else}
+        <div class="placeholder">No codec syntax data for this image</div>
+      {/if}
     {:else if activeTab === 'grid'}
-      <div class="placeholder">Grid tab — coming next</div>
+      <GridTab data={store.currentImage} />
     {/if}
   </div>
 </div>
