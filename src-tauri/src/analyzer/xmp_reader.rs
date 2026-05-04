@@ -2,33 +2,6 @@ use crate::types::MetadataEntry;
 use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
 
-/// Common XMP namespace prefixes we extract
-const XMP_FIELDS: &[(&str, &str)] = &[
-    ("CreatorTool", "xmp:CreatorTool"),
-    ("CreateDate", "xmp:CreateDate"),
-    ("ModifyDate", "xmp:ModifyDate"),
-    ("MetadataDate", "xmp:MetadataDate"),
-    ("Rating", "xmp:Rating"),
-    ("Label", "xmp:Label"),
-    ("Description", "dc:description"),
-    ("Title", "dc:title"),
-    ("Creator", "dc:creator"),
-    ("Rights", "dc:rights"),
-    ("Subject", "dc:subject"),
-    ("Format", "dc:format"),
-    ("Source", "dc:source"),
-    ("Publisher", "dc:publisher"),
-    ("Contributor", "dc:contributor"),
-    ("Coverage", "dc:coverage"),
-    ("Identifier", "dc:identifier"),
-    ("Language", "dc:language"),
-    ("LensInfo", "aux:LensInfo"),
-    ("Lens", "aux:Lens"),
-    ("SerialNumber", "aux:SerialNumber"),
-    ("ImageNumber", "aux:ImageNumber"),
-    ("ApproximateFocusDistance", "aux:ApproximateFocusDistance"),
-];
-
 pub fn read_xmp(data: &[u8]) -> Result<Vec<MetadataEntry>, String> {
     let xml_str = String::from_utf8_lossy(data);
 
@@ -38,7 +11,8 @@ pub fn read_xmp(data: &[u8]) -> Result<Vec<MetadataEntry>, String> {
     let mut entries = Vec::new();
     let mut buf = Vec::new();
 
-    // First pass: extract attributes from rdf:Description and text from known elements
+    // First pass: extract ALL attributes from rdf:Description (not just whitelisted ones)
+    // and text from known elements
     let mut current_element: Option<String> = None;
     let mut text_buffer = String::new();
 
@@ -49,7 +23,7 @@ pub fn read_xmp(data: &[u8]) -> Result<Vec<MetadataEntry>, String> {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
                 if name == "rdf:Description" {
-                    // Extract attributes from rdf:Description
+                    // Extract ALL attributes from rdf:Description, not just whitelisted
                     for attr in e.attributes().flatten() {
                         let attr_name = String::from_utf8_lossy(attr.key.as_ref()).to_string();
                         let attr_value = String::from_utf8_lossy(&attr.value)
@@ -57,8 +31,13 @@ pub fn read_xmp(data: &[u8]) -> Result<Vec<MetadataEntry>, String> {
                             .trim()
                             .to_string();
 
-                        if !attr_value.is_empty() && is_known_xmp_field(&attr_name) {
-                            let display_name = map_xmp_attr_name(&attr_name);
+                        // Skip xmlns declarations and empty values
+                        if attr_name.starts_with("xmlns") || attr_value.is_empty() {
+                            continue;
+                        }
+
+                        let display_name = map_xmp_attr_name(&attr_name);
+                        if !display_name.is_empty() {
                             entries.push(MetadataEntry {
                                 standard: "XMP".to_string(),
                                 tag_name: display_name,
@@ -68,6 +47,33 @@ pub fn read_xmp(data: &[u8]) -> Result<Vec<MetadataEntry>, String> {
                         }
                     }
                 } else {
+                    // For child elements of rdf:Description, also extract their attributes
+                    // (e.g., <xmpMM:DerivedFrom stRef:instanceID="...">)
+                    if current_element.is_some() {
+                        // We're inside rdf:Description - extract attributes from child elements
+                        for attr in e.attributes().flatten() {
+                            let attr_name = String::from_utf8_lossy(attr.key.as_ref()).to_string();
+                            let attr_value = String::from_utf8_lossy(&attr.value)
+                                .to_string()
+                                .trim()
+                                .to_string();
+
+                            if attr_name.starts_with("xmlns") || attr_value.is_empty() {
+                                continue;
+                            }
+
+                            let display_name = map_xmp_attr_name(&attr_name);
+                            if !display_name.is_empty() {
+                                entries.push(MetadataEntry {
+                                    standard: "XMP".to_string(),
+                                    tag_name: display_name,
+                                    tag_value: attr_value.clone(),
+                                    raw_value: Some(attr_value),
+                                });
+                            }
+                        }
+                    }
+
                     current_element = Some(name);
                     text_buffer.clear();
                 }
@@ -83,20 +89,22 @@ pub fn read_xmp(data: &[u8]) -> Result<Vec<MetadataEntry>, String> {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
                 if name == "rdf:Description" {
-                    // End of rdf:Description
+                    // Exiting rdf:Description - reset tracking
+                    current_element = None;
                 } else {
                     // If this element had text content and is a known XMP field
                     if let Some(ref elem_name) = current_element {
                         if elem_name == &name && !text_buffer.is_empty() {
                             let display_name = map_xmp_elem_name(elem_name);
-                            if is_known_xmp_field(elem_name) || !display_name.is_empty() {
+                            let tag_name = if display_name.is_empty() {
+                                map_xmp_attr_name(elem_name)
+                            } else {
+                                display_name
+                            };
+                            if !tag_name.is_empty() {
                                 entries.push(MetadataEntry {
                                     standard: "XMP".to_string(),
-                                    tag_name: if display_name.is_empty() {
-                                        elem_name.clone()
-                                    } else {
-                                        display_name
-                                    },
+                                    tag_name,
                                     tag_value: text_buffer.clone(),
                                     raw_value: Some(text_buffer.clone()),
                                 });
@@ -107,7 +115,6 @@ pub fn read_xmp(data: &[u8]) -> Result<Vec<MetadataEntry>, String> {
                 }
             }
             Err(e) => {
-                // XML parsing errors are non-fatal; return what we got
                 if entries.is_empty() {
                     return Err(format!("Failed to parse XMP XML: {}", e));
                 }
@@ -127,11 +134,6 @@ pub fn read_xmp(data: &[u8]) -> Result<Vec<MetadataEntry>, String> {
     }
 
     Ok(entries)
-}
-
-fn is_known_xmp_field(name: &str) -> bool {
-    XMP_FIELDS.iter().any(|(_, qname)| *qname == name)
-        || XMP_FIELDS.iter().any(|(short, _)| *short == name)
 }
 
 fn map_xmp_attr_name(name: &str) -> String {

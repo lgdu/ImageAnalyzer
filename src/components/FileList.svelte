@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { store } from '../lib/store';
+  import { store } from '../lib/store.svelte';
   import ThumbnailCard from './ThumbnailCard.svelte';
 
   function selectImage(image: typeof store.currentImage) {
@@ -26,6 +26,21 @@
     flex: 1;
     overflow-y: auto;
     padding: 0.5rem 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-default) transparent;
+  }
+
+  .file-list::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .file-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .file-list::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border-radius: 10px;
   }
 
   .empty {
@@ -34,6 +49,6 @@
     justify-content: center;
     height: 4rem;
     font-size: 0.8125rem;
-    color: var(--color-text-muted);
+    color: var(--text-secondary);
   }
 </style>

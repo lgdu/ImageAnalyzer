@@ -3,6 +3,73 @@ use crate::utils::{bytes_to_hex, read_file_bytes};
 
 use super::{exif_reader, xmp_reader};
 
+/// Decompress zlib-compressed WebP ICCP data
+fn decompress_iccp_chunk(data: &[u8]) -> Option<Vec<u8>> {
+    // WebP ICCP chunk: null-terminated profile name, then zlib-compressed ICC profile
+    let name_end = data.iter().position(|&b| b == 0)? + 1;
+    // Pad to even byte boundary if needed
+    let icc_start = if name_end % 2 != 0 {
+        name_end + 1
+    } else {
+        name_end
+    };
+    if icc_start >= data.len() {
+        return None;
+    }
+    let compressed = &data[icc_start..];
+    miniz_oxide::inflate::decompress_to_vec(compressed).ok()
+}
+
+/// Extract raw ICC profile bytes from WebP ICCP chunk
+pub fn extract_icc_data(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.len() < 20 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return None;
+    }
+
+    let file_size = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    if bytes.len() < file_size + 8 {
+        return None;
+    }
+
+    let mut pos: usize = 12;
+    while pos + 8 <= bytes.len() {
+        let fourcc = &bytes[pos..pos + 4];
+        let chunk_size = u32::from_le_bytes([
+            bytes[pos + 4],
+            bytes[pos + 5],
+            bytes[pos + 6],
+            bytes[pos + 7],
+        ]) as usize;
+
+        if fourcc == CHUNK_ICCP {
+            let data_start = pos + 8;
+            let data_end = data_start + chunk_size;
+            if data_end <= bytes.len() {
+                return decompress_iccp_chunk(&bytes[data_start..data_end]);
+            }
+        }
+
+        pos += 8 + chunk_size;
+        // Chunks are padded to even byte boundary
+        if chunk_size % 2 != 0 {
+            pos += 1;
+        }
+    }
+    None
+}
+
+fn format_bytes(n: u64) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else if n < 1024 * 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else if n < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", n as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
 // WebP RIFF constants
 const RIFF_SIGNATURE: &[u8] = b"RIFF";
 const WEBP_SIGNATURE: &[u8] = b"WEBP";
@@ -32,32 +99,34 @@ struct Vp8Info {
 }
 
 /// Parse the VP8 lossy bitstream header to extract dimensions.
-/// VP8 bitstream: frame tag (3 bytes min), then various fields,
+/// VP8 bitstream: frame tag (1-3 bytes), then sync code (0x9D 0x01 0x2A) for keyframes,
 /// then width (2 bytes LE) and height (2 bytes LE) masked with 0x3FFF.
 fn parse_vp8_header(data: &[u8]) -> Option<Vp8Info> {
     if data.len() < 10 {
         return None;
     }
 
-    // Skip frame tag (1-3 bytes). For a keyframe, the first bit is 0.
-    // We need to find the start of the keyframe data.
-    // The frame tag: bit 0 = keyframe flag (0 = keyframe),
-    // bits 1-3 = version, bit 4 = show_frame.
+    // Check if it's a keyframe (bit 0 = 0)
     let frame_tag = data[0];
     let is_keyframe = (frame_tag & 0x01) == 0;
     if !is_keyframe {
         return None;
     }
 
-    // Keyframe header starts with sync code: 0x9D 0x01 0x2A
-    if data.len() < 13 || data[1] != 0x9D || data[2] != 0x01 || data[3] != 0x2A {
+    // Find the keyframe sync code 0x9D 0x01 0x2A within the first few bytes.
+    // Frame tag can be 1-3 bytes depending on show_frame and partition flags.
+    let sync_start = (1..=3).find(|&i| {
+        data.len() >= i + 3 && data[i] == 0x9D && data[i + 1] == 0x01 && data[i + 2] == 0x2A
+    })?;
+
+    // After sync code: 3 bytes (width as 16-bit LE & 0x3FFF, height as 16-bit LE & 0x3FFF)
+    let base = sync_start + 3;
+    if data.len() < base + 6 {
         return None;
     }
 
-    // After sync code: width_lo | (width_hi << 8), height_lo | (height_hi << 8)
-    // The width/height are stored as 14-bit values (masked with 0x3FFF)
-    let width = ((data[7] as u16) | ((data[8] as u16) << 8)) & 0x3FFF;
-    let height = ((data[9] as u16) | ((data[10] as u16) << 8)) & 0x3FFF;
+    let width = ((data[base] as u16) | ((data[base + 1] as u16) << 8)) & 0x3FFF;
+    let height = ((data[base + 2] as u16) | ((data[base + 3] as u16) << 8)) & 0x3FFF;
 
     Some(Vp8Info {
         width: width as u32,
@@ -253,7 +322,6 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
     let mut structure: Vec<FileBlock> = Vec::new();
     let mut metadata: Vec<MetadataEntry> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
-    let mut icc_data: Option<Vec<u8>> = None;
 
     // Root RIFF block
     structure.push(FileBlock {
@@ -268,6 +336,7 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
             "RIFF size field: {} (total file: {})",
             riff_size, file_size
         )),
+        fields: Vec::new(),
         children: vec![],
     });
 
@@ -329,6 +398,7 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
                     "{} (truncated, expected {} data bytes)",
                     chunk_name, data_size
                 )),
+                fields: Vec::new(),
                 children: vec![],
             });
             break;
@@ -473,6 +543,7 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
                         length: sub_total as u64,
                         data_preview: Some(bytes_to_hex(sub_data, 32)),
                         decoded_info: sub_decoded,
+                        fields: Vec::new(),
                         children: vec![],
                     });
 
@@ -482,8 +553,7 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
                 decoded_info = Some(format!("ANMF frame {}, {} bytes", frame_count, data_size));
             }
         } else if fourcc == CHUNK_ICCP {
-            decoded_info = Some(format!("ICC profile, {} bytes", data_size));
-            icc_data = Some(chunk_data.to_vec());
+            decoded_info = Some(format!("ICC profile (compressed, {} bytes)", data_size));
         } else if fourcc == CHUNK_EXIF {
             decoded_info = Some(format!("EXIF metadata, {} bytes", data_size));
             // EXIF chunk starts with TIFF header (8 bytes):
@@ -516,6 +586,7 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
             length: total_chunk_size as u64,
             data_preview: Some(bytes_to_hex(chunk_data, 32)),
             decoded_info,
+            fields: Vec::new(),
             children,
         };
 
@@ -553,6 +624,60 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
         color_type = format!("Animated WebP ({})", color_type);
     }
 
+    // Add structural metadata
+    metadata.push(MetadataEntry {
+        standard: "File".to_string(),
+        tag_name: "Format".to_string(),
+        tag_value: "WebP".to_string(),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "File".to_string(),
+        tag_name: "File Size".to_string(),
+        tag_value: format_bytes(file_size),
+        raw_value: None,
+    });
+    if width > 0 {
+        metadata.push(MetadataEntry {
+            standard: "Image".to_string(),
+            tag_name: "Dimensions".to_string(),
+            tag_value: format!("{width} × {height}"),
+            raw_value: None,
+        });
+        if is_animated {
+            metadata.push(MetadataEntry {
+                standard: "Animation".to_string(),
+                tag_name: "Frames".to_string(),
+                tag_value: format!("{frame_count}"),
+                raw_value: None,
+            });
+            metadata.push(MetadataEntry {
+                standard: "Animation".to_string(),
+                tag_name: "Loop Count".to_string(),
+                tag_value: format!("{loop_count}"),
+                raw_value: None,
+            });
+        }
+    }
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Color Type".to_string(),
+        tag_value: color_type.clone(),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Bit Depth".to_string(),
+        tag_value: format!("{bit_depth}"),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Has Alpha".to_string(),
+        tag_value: if has_alpha { "Yes" } else { "No" }.to_string(),
+        raw_value: None,
+    });
+
     Ok(ImageAnalysis {
         file_name,
         file_path: path.to_string(),
@@ -563,10 +688,11 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
         color_type,
         bit_depth,
         has_alpha,
+        thumbnail_base64: None,
         structure,
         metadata,
-        channels: crate::analyzer::channel_split::compute_channels(&bytes),
-        icc_profile: icc_data.as_ref().and_then(|d| crate::analyzer::icc_parser::parse_icc(d)),
+        channels: None,
+        icc_profile: None,
         codec_syntax: None,
         grid: None,
         analysis_errors: errors,
@@ -576,6 +702,31 @@ pub fn analyze_webp(path: &str) -> Result<ImageAnalysis, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_vp8_with_3byte_frame_tag() {
+        // Simulates the user's file: 3-byte frame tag (50 ed 0e) then sync code
+        // data[0] = 0x50 -> keyframe (bit 0 = 0)
+        // frame tag = 3 bytes, sync code at offset 3
+        let mut vp8_data = vec![0u8; 20];
+        vp8_data[0] = 0x50; // keyframe, 3-byte tag
+        vp8_data[1] = 0xed;
+        vp8_data[2] = 0x0e;
+        vp8_data[3] = 0x9D; // sync code
+        vp8_data[4] = 0x01;
+        vp8_data[5] = 0x2A;
+        // width at offset 6-7: 0x800b -> 0b80 07 -> actually bytes 6,7 after sync
+        // In real file: data[base] = 0x40, data[base+1] = 0x0b
+        // width = (0x40 | (0x0b << 8)) & 0x3FFF = 0x0B40 = 2880
+        vp8_data[6] = 0x40;
+        vp8_data[7] = 0x0b;
+        vp8_data[8] = 0x80;
+        vp8_data[9] = 0x07;
+        // height = (0x80 | (0x07 << 8)) & 0x3FFF = 0x0780 = 1920
+        let info = parse_vp8_header(&vp8_data).expect("should parse 3-byte tag VP8");
+        assert_eq!(info.width, 2880);
+        assert_eq!(info.height, 1920);
+    }
 
     #[test]
     fn analyzes_lossy_webp() {

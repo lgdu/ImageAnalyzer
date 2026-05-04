@@ -1,6 +1,53 @@
 use crate::types::{FileBlock, ImageAnalysis, ImageFormat, MetadataEntry};
 use crate::utils::{bytes_to_hex, read_file_bytes};
 
+fn format_bytes(n: u64) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else if n < 1024 * 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else if n < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", n as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+/// Decompress zlib data from PNG iCCP chunk
+pub fn extract_icc_data(data: &[u8]) -> Option<Vec<u8>> {
+    let mut pos: usize = 8; // skip PNG signature
+
+    while pos < data.len() {
+        if pos + 12 > data.len() {
+            break; // need at least length(4) + name(4) + crc(4)
+        }
+        let chunk_len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let chunk_name = &data[pos + 4..pos + 8];
+
+        if chunk_name == CHUNK_ICCP {
+            let data_start = pos + 8;
+            let data_end = data_start + chunk_len;
+            if data_end <= data.len() {
+                return decompress_iccp(&data[data_start..data_end]);
+            }
+        }
+
+        // Advance: length(4) + name(4) + chunk_data + crc(4)
+        pos += 12 + chunk_len;
+    }
+    None
+}
+
+fn decompress_iccp(data: &[u8]) -> Option<Vec<u8>> {
+    let null_pos = data.iter().position(|&b| b == 0)?;
+    let icc_start = null_pos + 2; // skip null + compression method byte
+    if icc_start >= data.len() {
+        return None;
+    }
+    miniz_oxide::inflate::decompress_to_vec(&data[icc_start..]).ok()
+}
+
 /// 8-byte PNG signature: \x89PNG\r\n\x1a\n
 const PNG_SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
@@ -343,7 +390,10 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
     }
 
     if bytes[..8] != PNG_SIGNATURE {
-        return Err("Invalid PNG signature".to_string());
+        return Err(format!(
+            "Invalid PNG signature: file starts with {:02x?}",
+            &bytes[..8]
+        ));
     }
 
     let mut structure: Vec<FileBlock> = Vec::new();
@@ -355,7 +405,6 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
     let mut color_type: u8 = 0;
     let mut bit_depth: u8 = 0;
     let mut has_alpha: bool = false;
-    let mut icc_data: Option<Vec<u8>> = None;
 
     // Parse chunks starting after the 8-byte signature
     let mut pos: usize = 8;
@@ -390,6 +439,7 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
                             "{} (truncated, expected {} data bytes)",
                             name, data_length
                         )),
+                        fields: Vec::new(),
                         children: vec![],
                     });
                     break;
@@ -451,14 +501,6 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
                     }
                 }
 
-                // Extract ICC profile data
-                if name.as_bytes() == *CHUNK_ICCP {
-                    if let Some(null_pos) = chunk_data.iter().position(|&b| b == 0) {
-                        let profile_start = data_start + null_pos + 2; // skip null + compression byte
-                        icc_data = Some(bytes[profile_start..data_end].to_vec());
-                    }
-                }
-
                 // Build the file block
                 let block = FileBlock {
                     name: name.clone(),
@@ -466,6 +508,7 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
                     length: total_size as u64,
                     data_preview,
                     decoded_info,
+                    fields: Vec::new(),
                     children: vec![],
                 };
                 structure.push(block);
@@ -494,6 +537,46 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
     // Determine color type string
     let color_type_str = color_type_name(color_type);
 
+    // Add structural metadata so the metadata tab always has useful info
+    metadata.push(MetadataEntry {
+        standard: "File".to_string(),
+        tag_name: "Format".to_string(),
+        tag_value: "PNG".to_string(),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "File".to_string(),
+        tag_name: "File Size".to_string(),
+        tag_value: format_bytes(file_size),
+        raw_value: None,
+    });
+    if width > 0 {
+        metadata.push(MetadataEntry {
+            standard: "Image".to_string(),
+            tag_name: "Dimensions".to_string(),
+            tag_value: format!("{width} × {height}"),
+            raw_value: None,
+        });
+    }
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Color Type".to_string(),
+        tag_value: color_type_str.to_string(),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Bit Depth".to_string(),
+        tag_value: format!("{bit_depth}"),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Has Alpha".to_string(),
+        tag_value: if has_alpha { "Yes" } else { "No" }.to_string(),
+        raw_value: None,
+    });
+
     Ok(ImageAnalysis {
         file_name,
         file_path: path.to_string(),
@@ -504,10 +587,11 @@ pub fn analyze_png(path: &str) -> Result<ImageAnalysis, String> {
         color_type: color_type_str.to_string(),
         bit_depth,
         has_alpha,
+        thumbnail_base64: None,
         structure,
         metadata,
-        channels: crate::analyzer::channel_split::compute_channels(&bytes),
-        icc_profile: icc_data.as_ref().and_then(|d| crate::analyzer::icc_parser::parse_icc(d)),
+        channels: None,
+        icc_profile: None,
         codec_syntax: None,
         grid: None,
         analysis_errors: errors,

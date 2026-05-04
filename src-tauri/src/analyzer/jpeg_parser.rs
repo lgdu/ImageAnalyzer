@@ -3,6 +3,18 @@ use crate::utils::{bytes_to_hex, read_file_bytes};
 
 use super::{exif_reader, iptc_reader, xmp_reader};
 
+fn format_bytes(n: u64) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else if n < 1024 * 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else if n < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", n as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
 // JPEG marker constants
 const SOI: u8 = 0xD8;
 const EOI: u8 = 0xD9;
@@ -416,6 +428,7 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
         length: 2,
         data_preview: Some("ff d8".to_string()),
         decoded_info: Some("Start of Image".to_string()),
+        fields: Vec::new(),
         children: vec![],
     });
 
@@ -475,6 +488,7 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
                         length: total_consumed as u64,
                         data_preview: Some(bytes_to_hex(sos_header, 32)),
                         decoded_info: Some(format!("Start of Scan, header: {} bytes", data_len)),
+                        fields: Vec::new(),
                         children: vec![],
                     });
 
@@ -502,6 +516,7 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
                                 entropy_len
                             )),
                             decoded_info: None,
+                            fields: Vec::new(),
                             children: vec![],
                         });
                     }
@@ -582,6 +597,7 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
                                         "{}: sampling {}:{}, QT table {}",
                                         comp_name, comp.h_sampling, comp.v_sampling, comp.qt_table
                                     )),
+                                    fields: Vec::new(),
                                     children: vec![],
                                 });
                             }
@@ -592,6 +608,7 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
                                 length: total_consumed as u64,
                                 data_preview: Some(bytes_to_hex(marker_data, 32)),
                                 decoded_info: build_marker_decoded_info(marker, marker_data),
+                                fields: Vec::new(),
                                 children,
                             });
 
@@ -613,6 +630,7 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
                     length: total_consumed as u64,
                     data_preview,
                     decoded_info,
+                    fields: Vec::new(),
                     children: vec![],
                 });
 
@@ -646,6 +664,46 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
         }
     }
 
+    // Add structural metadata so the metadata tab always has useful info
+    metadata.push(MetadataEntry {
+        standard: "File".to_string(),
+        tag_name: "Format".to_string(),
+        tag_value: "JPEG".to_string(),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "File".to_string(),
+        tag_name: "File Size".to_string(),
+        tag_value: format_bytes(file_size),
+        raw_value: None,
+    });
+    if width > 0 {
+        metadata.push(MetadataEntry {
+            standard: "Image".to_string(),
+            tag_name: "Dimensions".to_string(),
+            tag_value: format!("{width} × {height}"),
+            raw_value: None,
+        });
+    }
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Color Type".to_string(),
+        tag_value: color_type.clone(),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Bit Depth".to_string(),
+        tag_value: format!("{bit_depth}"),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Has Alpha".to_string(),
+        tag_value: if has_alpha { "Yes" } else { "No" }.to_string(),
+        raw_value: None,
+    });
+
     // Check for trailing data after EOI
     // (already handled by the EOI break, but report if we hit EOF without EOI)
     let last_block = structure.last().map(|b| b.name.clone());
@@ -657,9 +715,6 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
     // Build children for APP2 ICC_PROFILE blocks
     merge_icc_blocks(&mut structure);
 
-    // Extract ICC profile from APP2 blocks
-    let icc_profile = extract_jpeg_icc(&bytes);
-
     Ok(ImageAnalysis {
         file_name,
         file_path: path.to_string(),
@@ -670,10 +725,11 @@ pub fn analyze_jpeg(path: &str) -> Result<ImageAnalysis, String> {
         color_type,
         bit_depth,
         has_alpha,
+        thumbnail_base64: None,
         structure,
         metadata,
-        channels: crate::analyzer::channel_split::compute_channels(&bytes),
-        icc_profile,
+        channels: None,
+        icc_profile: None,
         codec_syntax: None,
         grid: None,
         analysis_errors: errors,
@@ -727,6 +783,7 @@ fn merge_icc_blocks(structure: &mut Vec<FileBlock>) {
                     length: block.length,
                     data_preview: block.data_preview.clone(),
                     decoded_info: block.decoded_info.clone(),
+                    fields: Vec::new(),
                     children: vec![],
                 }
             })
@@ -742,6 +799,7 @@ fn merge_icc_blocks(structure: &mut Vec<FileBlock>) {
                 total_length
             )),
             decoded_info: Some(format!("ICC Profile: {} parts", children.len())),
+            fields: Vec::new(),
             children,
         };
 
@@ -754,35 +812,40 @@ fn merge_icc_blocks(structure: &mut Vec<FileBlock>) {
     }
 }
 
-/// Extract and parse ICC profile from JPEG APP2 segments
-fn extract_jpeg_icc(bytes: &[u8]) -> Option<crate::types::IccInfo> {
+/// Extract raw ICC profile bytes from JPEG APP2 segments
+pub fn extract_icc_data(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut pos: usize = 2;
     let mut parts: Vec<(u8, Vec<u8>)> = Vec::new();
-    let mut pos = 2; // skip SOI marker
 
-    while pos + 4 < bytes.len() {
-        let marker = bytes[pos];
-        if marker != APP2 {
+    while pos + 4 <= bytes.len() {
+        if bytes[pos] != 0xFF {
             pos += 1;
             continue;
         }
-        if pos + 18 > bytes.len() {
-            break;
-        }
-        if &bytes[pos + 4..pos + 18] != b"ICC_PROFILE\x00" {
+        // Skip padding 0xFF bytes
+        while pos + 1 < bytes.len() && bytes[pos + 1] == 0xFF {
             pos += 1;
-            continue;
         }
-        let part_num = bytes[pos + 18];
-        let _total_parts = bytes[pos + 19];
-        let seg_len =
-            u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]) as usize;
-        let data_start = pos + 20;
-        let data_end = pos + seg_len;
-        if data_end > bytes.len() {
+        if pos + 1 >= bytes.len() {
             break;
         }
-        parts.push((part_num, bytes[data_start..data_end].to_vec()));
-        pos = data_end;
+        let marker = bytes[pos + 1];
+        if marker == 0xD9 || marker == 0xDA {
+            break;
+        }
+        let seg_len = u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]) as usize;
+        let seg_end = pos + 2 + seg_len;
+        if seg_end > bytes.len() {
+            break;
+        }
+
+        if marker == APP2 && seg_end >= pos + 18 && &bytes[pos + 4..pos + 16] == b"ICC_PROFILE\0" {
+            let part_num = bytes[pos + 16];
+            let data = bytes[pos + 18..seg_end].to_vec();
+            parts.push((part_num, data));
+        }
+
+        pos = seg_end;
     }
 
     if parts.is_empty() {
@@ -790,6 +853,105 @@ fn extract_jpeg_icc(bytes: &[u8]) -> Option<crate::types::IccInfo> {
     }
 
     parts.sort_by_key(|&(num, _)| num);
-    let icc_data: Vec<u8> = parts.into_iter().flat_map(|(_, data)| data).collect();
+    let mut icc_data: Vec<u8> = parts.into_iter().flat_map(|(_, data)| data).collect();
+
+    // Strip Apple 4-byte vendor header if present
+    if icc_data.len() >= 8 {
+        let declared_size =
+            u32::from_be_bytes([icc_data[4], icc_data[5], icc_data[6], icc_data[7]]) as usize;
+        if declared_size == icc_data.len() - 4 {
+            icc_data = icc_data[4..].to_vec();
+        }
+    }
+
+    Some(icc_data)
+}
+
+/// Extract and parse ICC profile from JPEG APP2 segments (used by tests)
+#[cfg(test)]
+fn extract_jpeg_icc(bytes: &[u8]) -> Option<crate::types::IccInfo> {
+    let mut parts: Vec<(u8, Vec<u8>)> = Vec::new();
+    let mut pos: usize = 2; // skip SOI
+
+    while pos + 4 <= bytes.len() {
+        // Find next 0xFF marker
+        if bytes[pos] != 0xFF {
+            pos += 1;
+            continue;
+        }
+        // Skip padding 0xFF bytes
+        while pos + 1 < bytes.len() && bytes[pos + 1] == 0xFF {
+            pos += 1;
+        }
+        if pos + 1 >= bytes.len() {
+            break;
+        }
+        let marker = bytes[pos + 1];
+        // EOI (0xD9) or SOS (0xDA): stop scanning
+        if marker == 0xD9 || marker == 0xDA {
+            break;
+        }
+        // Read segment length (includes the 2 length bytes)
+        let seg_len = u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]) as usize;
+        let seg_end = pos + 2 + seg_len;
+        if seg_end > bytes.len() {
+            break;
+        }
+
+        // Check for APP2 with ICC_PROFILE
+        if marker == APP2 && seg_end >= pos + 18 {
+            if &bytes[pos + 4..pos + 16] == b"ICC_PROFILE\0" {
+                let part_num = bytes[pos + 16];
+                let data = bytes[pos + 18..seg_end].to_vec();
+                parts.push((part_num, data));
+            }
+        }
+
+        pos = seg_end;
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    parts.sort_by_key(|&(num, _)| num);
+    let mut icc_data: Vec<u8> = parts.into_iter().flat_map(|(_, data)| data).collect();
+
+    // Some vendors (e.g. Apple) prepend a 4-byte header to the ICC data.
+    // Detect this by checking if the declared ICC size doesn't match the data length.
+    // If icc_data[4..8] looks like a valid ICC size that matches the remaining data,
+    // strip the 4-byte prefix.
+    if icc_data.len() >= 8 {
+        let declared_size =
+            u32::from_be_bytes([icc_data[4], icc_data[5], icc_data[6], icc_data[7]]) as usize;
+        if declared_size == icc_data.len() - 4 {
+            // The real ICC profile starts at offset 4
+            icc_data = icc_data[4..].to_vec();
+        }
+    }
+
     crate::analyzer::icc_parser::parse_icc(&icc_data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jpeg_icc_from_actual_file() {
+        let path = "/Users/liguodu/Downloads/微信图片_20260419235301_36_159.jpg";
+        let bytes = crate::utils::read_file_bytes(path).unwrap();
+        let icc_data = extract_icc_data(&bytes).expect("ICC data should be present");
+        let icc = crate::analyzer::icc_parser::parse_icc(&icc_data).expect("ICC should parse");
+        assert_eq!(icc.size, 548);
+        assert_eq!(icc.tag_count, 10);
+    }
+
+    #[test]
+    fn jpeg_without_icc() {
+        let result = analyze_jpeg("/tmp/image-analyzer-tests/test_noexif.jpg");
+        if let Ok(analysis) = result {
+            eprintln!("No-exif JPEG: icc={:?}", analysis.icc_profile.is_some());
+        }
+    }
 }

@@ -1,6 +1,6 @@
+use crate::types::{IccInfo, IccTag, LutInfo};
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io::Cursor;
-use crate::types::{IccInfo, IccTag, LutInfo};
 
 /// Parse ICC profile raw data into structured IccInfo
 pub fn parse_icc(data: &[u8]) -> Option<IccInfo> {
@@ -36,6 +36,8 @@ pub fn parse_icc(data: &[u8]) -> Option<IccInfo> {
 
     cursor.set_position(128);
     let tag_count = cursor.read_u32::<BigEndian>().ok()?;
+    let tag_count_usize = tag_count as usize;
+
     let mut tags = Vec::new();
     let mut luts = Vec::new();
     let mut description: Option<String> = None;
@@ -44,8 +46,10 @@ pub fn parse_icc(data: &[u8]) -> Option<IccInfo> {
     let mut green_trc: Option<String> = None;
     let mut blue_trc: Option<String> = None;
 
-    for _ in 0..tag_count {
-        let tag_sig = read_tag4(data, cursor.position() as usize)?;
+    for _i in 0..tag_count_usize {
+        let tag_pos = cursor.position() as usize;
+        let tag_sig = read_tag4(data, tag_pos)?;
+        cursor.set_position(tag_pos as u64 + 4); // advance past the tag_sig we just read
         let tag_offset = cursor.read_u32::<BigEndian>().ok()? as usize;
         let tag_size = cursor.read_u32::<BigEndian>().ok()? as usize;
 
@@ -194,8 +198,7 @@ fn describe_trc(data: &[u8], offset: usize, _size: usize) -> Option<String> {
                     Some("Linear".to_string())
                 } else if count == 1 {
                     if offset + 10 <= data.len() {
-                        let gamma =
-                            u16::from_be_bytes([data[offset + 8], data[offset + 9]]);
+                        let gamma = u16::from_be_bytes([data[offset + 8], data[offset + 9]]);
                         Some(format!("Gamma={:.2}", gamma as f64 / 256.0))
                     } else {
                         None

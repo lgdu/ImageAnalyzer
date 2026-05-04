@@ -1,6 +1,18 @@
 use crate::types::{FileBlock, ImageAnalysis, ImageFormat, MetadataEntry};
 use crate::utils::{bytes_to_hex, read_file_bytes};
 
+fn format_bytes(n: u64) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else if n < 1024 * 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else if n < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", n as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
 // GIF constants
 const GIF87A_SIGNATURE: &[u8] = b"GIF87a";
 const GIF89A_SIGNATURE: &[u8] = b"GIF89a";
@@ -130,6 +142,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
         length: 6,
         data_preview: Some(version.clone()),
         decoded_info: Some(format!("GIF version: {}", version)),
+        fields: Vec::new(),
         children: vec![],
     });
 
@@ -157,6 +170,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
             length: gct_size as u64,
             data_preview: Some(bytes_to_hex(&bytes[13..13 + gct_size.min(32)], 32)),
             decoded_info: Some(format!("{} palette entries", gct_size / 3)),
+            fields: Vec::new(),
             children: vec![],
         });
     }
@@ -167,6 +181,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
         length: 7 + if has_gct { gct_size as u64 } else { 0 },
         data_preview: None,
         decoded_info: Some(lsd_info),
+        fields: Vec::new(),
         children: lsd_children,
     });
 
@@ -191,6 +206,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                     length: 1,
                     data_preview: Some("3b".to_string()),
                     decoded_info: Some("End of GIF".to_string()),
+                    fields: Vec::new(),
                     children: vec![],
                 });
                 break;
@@ -247,6 +263,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                             32,
                         )),
                         decoded_info: Some(format!("{} palette entries", lct_size / 3)),
+                        fields: Vec::new(),
                         children: vec![],
                     });
                 }
@@ -272,6 +289,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                             count_sub_blocks(&bytes, data_pos),
                             total_sub_data
                         )),
+                        fields: Vec::new(),
                         children: vec![],
                     });
 
@@ -294,6 +312,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                     length: (pos as u64) - block_offset,
                     data_preview: None,
                     decoded_info: Some(img_info),
+                    fields: Vec::new(),
                     children: img_children,
                 });
 
@@ -348,6 +367,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                             length: 8,
                             data_preview: None,
                             decoded_info: Some(gce_info),
+                            fields: Vec::new(),
                             children: vec![],
                         });
 
@@ -397,6 +417,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                                 };
                                 Some(format!("Comment: {}", preview))
                             },
+                            fields: Vec::new(),
                             children: vec![],
                         });
 
@@ -426,6 +447,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                                 "Plain text, {} bytes of data",
                                 sub_blocks_len
                             )),
+                            fields: Vec::new(),
                             children: vec![],
                         });
 
@@ -493,6 +515,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                                     "NETSCAPE2.0: loop count = {} ({})",
                                     loop_count, loop_str
                                 )),
+                                fields: Vec::new(),
                                 children: vec![],
                             });
                         } else {
@@ -509,6 +532,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                                     "Application: {}, {} bytes of data",
                                     app_identifier, sub_blocks_len
                                 )),
+                                fields: Vec::new(),
                                 children: vec![],
                             });
                         }
@@ -532,6 +556,7 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
                                 "Unknown extension label 0x{:02X}, {} bytes",
                                 ext_label, sub_blocks_len
                             )),
+                            fields: Vec::new(),
                             children: vec![],
                         });
 
@@ -598,6 +623,56 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
         }
     }
 
+    // Add structural metadata
+    metadata.push(MetadataEntry {
+        standard: "File".to_string(),
+        tag_name: "Format".to_string(),
+        tag_value: format!("GIF {version}"),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "File".to_string(),
+        tag_name: "File Size".to_string(),
+        tag_value: format_bytes(file_size),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Dimensions".to_string(),
+        tag_value: format!("{width} × {height}"),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Color Type".to_string(),
+        tag_value: color_type.clone(),
+        raw_value: None,
+    });
+    metadata.push(MetadataEntry {
+        standard: "Image".to_string(),
+        tag_name: "Bit Depth".to_string(),
+        tag_value: "8 (indexed)".to_string(),
+        raw_value: None,
+    });
+    if has_animation {
+        metadata.push(MetadataEntry {
+            standard: "Animation".to_string(),
+            tag_name: "Frames".to_string(),
+            tag_value: format!("{frame_count}"),
+            raw_value: None,
+        });
+        metadata.push(MetadataEntry {
+            standard: "Animation".to_string(),
+            tag_name: "Loop Count".to_string(),
+            tag_value: if loop_count == 0 {
+                "infinite".to_string()
+            } else {
+                loop_count.to_string()
+            },
+            raw_value: None,
+        });
+    }
+
     Ok(ImageAnalysis {
         file_name,
         file_path: path.to_string(),
@@ -607,10 +682,11 @@ pub fn analyze_gif(path: &str) -> Result<ImageAnalysis, String> {
         height,
         color_type,
         bit_depth,
-        has_alpha: false, // GIF89a supports transparency via transparent index, but not true alpha channel
+        has_alpha: false,
+        thumbnail_base64: None,
         structure,
         metadata,
-        channels: crate::analyzer::channel_split::compute_channels(&bytes),
+        channels: None,
         icc_profile: None,
         codec_syntax: None,
         grid: None,

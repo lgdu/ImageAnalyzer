@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { store } from '../lib/store';
+  import { store } from '../lib/store.svelte';
   import type { ImageAnalysis } from '../lib/types';
 
   let dragOver = $state(false);
@@ -12,17 +12,18 @@
     store.isAnalyzing = true;
     const errors: string[] = [];
 
-    for (const filePath of paths) {
-      // Deduplicate: skip files already in the list
-      if (store.fileList.some(f => f.file_path === filePath)) continue;
+    // Close old files: clear file list and current image
+    store.fileList = [];
+    store.currentImage = null;
 
+    for (const filePath of paths) {
       try {
         const result: ImageAnalysis = await invoke('analyze_image', { filePath });
         store.fileList.push(result);
         if (store.currentImage === null) {
           store.currentImage = result;
         }
-        store.error = null; // clear error on success
+        store.error = null;
       } catch (e: unknown) {
         errors.push(e instanceof Error ? e.message : String(e));
       }
@@ -146,42 +147,55 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    padding: 1.5rem;
+    padding: 1.75rem 1.5rem;
     margin: 0.75rem;
-    border: 2px dashed var(--color-border);
-    border-radius: 8px;
+    border: 2px dashed var(--border-default);
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: border-color var(--duration-fast) var(--ease-out-expo),
-                background var(--duration-fast) var(--ease-out-expo);
+                background var(--duration-fast) var(--ease-out-expo),
+                box-shadow var(--duration-fast) var(--ease-out-expo);
   }
 
-  .dropzone:hover,
+  .dropzone:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+  }
+
   .drag-over {
-    border-color: var(--color-accent);
-    background: var(--color-accent-dim);
+    border-color: var(--accent-bright);
+    background: var(--bg-active);
+    box-shadow: 0 0 20px var(--accent-glow);
   }
 
   .icon {
     width: 2rem;
     height: 2rem;
-    color: var(--color-text-muted);
+    color: var(--text-secondary);
+    transition: color var(--duration-fast) var(--ease-out-expo);
+  }
+
+  .dropzone:hover .icon {
+    color: var(--accent);
   }
 
   .label {
-    font-size: 0.875rem;
-    color: var(--color-text);
+    font-size: 0.8125rem;
+    color: var(--text-primary);
+    font-weight: 500;
   }
 
   .hint {
-    font-size: 0.75rem;
-    color: var(--color-text-muted);
+    font-size: 0.6875rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.02em;
   }
 
   .spinner {
     width: 1.5rem;
     height: 1.5rem;
-    border: 2px solid var(--color-border);
-    border-top-color: var(--color-accent);
+    border: 2px solid var(--border-default);
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }

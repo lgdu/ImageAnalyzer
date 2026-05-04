@@ -1,30 +1,50 @@
 <script lang="ts">
-  import type { ImageAnalysis } from '../../lib/types';
+  import { invoke } from '@tauri-apps/api/core';
+  import type { IccInfo } from '../../lib/types';
 
-  let { data }: { data: ImageAnalysis } = $props();
+  let { filePath }: { filePath: string } = $props();
+  let iccProfile: IccInfo | null = $state(null);
+  let loading = $state(true);
+
+  // Load ICC on mount
+  $effect(() => {
+    if (!filePath) return;
+    loading = true;
+    iccProfile = null;
+    invoke<IccInfo | null>('get_icc_profile', { filePath })
+      .then((result) => {
+        iccProfile = result;
+        loading = false;
+      })
+      .catch(() => {
+        loading = false;
+      });
+  });
 </script>
 
 <div class="color-info">
-  {#if data.icc_profile}
+  {#if loading}
+    <p class="no-icc">Loading ICC profile...</p>
+  {:else if iccProfile}
     <section class="section">
       <h3>ICC Profile Header</h3>
       <table class="data-table">
         <tbody>
-        <tr><td>CMM Type</td><td>{data.icc_profile.cmm_type}</td></tr>
-        <tr><td>Version</td><td>{data.icc_profile.version}</td></tr>
-        <tr><td>Profile Class</td><td>{data.icc_profile.profile_class}</td></tr>
-        <tr><td>Color Space</td><td>{data.icc_profile.color_space}</td></tr>
-        <tr><td>PCS</td><td>{data.icc_profile.pcs}</td></tr>
-        {#if data.icc_profile.platform}
-          <tr><td>Platform</td><td>{data.icc_profile.platform}</td></tr>
+        <tr><td>CMM Type</td><td>{iccProfile.cmm_type}</td></tr>
+        <tr><td>Version</td><td>{iccProfile.version}</td></tr>
+        <tr><td>Profile Class</td><td>{iccProfile.profile_class}</td></tr>
+        <tr><td>Color Space</td><td>{iccProfile.color_space}</td></tr>
+        <tr><td>PCS</td><td>{iccProfile.pcs}</td></tr>
+        {#if iccProfile.platform}
+          <tr><td>Platform</td><td>{iccProfile.platform}</td></tr>
         {/if}
-        <tr><td>Rendering Intent</td><td>{data.icc_profile.rendering_intent}</td></tr>
-        <tr><td>Illuminant</td><td>X={data.icc_profile.illuminant[0].toFixed(4)} Y={data.icc_profile.illuminant[1].toFixed(4)} Z={data.icc_profile.illuminant[2].toFixed(4)}</td></tr>
-        {#if data.icc_profile.description}
-          <tr><td>Description</td><td>{data.icc_profile.description}</td></tr>
+        <tr><td>Rendering Intent</td><td>{iccProfile.rendering_intent}</td></tr>
+        <tr><td>Illuminant</td><td>X={iccProfile.illuminant[0].toFixed(4)} Y={iccProfile.illuminant[1].toFixed(4)} Z={iccProfile.illuminant[2].toFixed(4)}</td></tr>
+        {#if iccProfile.description}
+          <tr><td>Description</td><td>{iccProfile.description}</td></tr>
         {/if}
-        {#if data.icc_profile.creator}
-          <tr><td>Creator</td><td>{data.icc_profile.creator}</td></tr>
+        {#if iccProfile.creator}
+          <tr><td>Creator</td><td>{iccProfile.creator}</td></tr>
         {/if}
         </tbody>
       </table>
@@ -34,20 +54,20 @@
       <h3>Transfer Curves (TRC)</h3>
       <table class="data-table">
         <tbody>
-        {#if data.icc_profile.transfer_function}
-          <tr><td>Global TRC</td><td>{data.icc_profile.transfer_function}</td></tr>
+        {#if iccProfile.transfer_function}
+          <tr><td>Global TRC</td><td>{iccProfile.transfer_function}</td></tr>
         {/if}
-        {#if data.icc_profile.red_trc}
-          <tr><td>Red TRC</td><td>{data.icc_profile.red_trc}</td></tr>
+        {#if iccProfile.red_trc}
+          <tr><td>Red TRC</td><td>{iccProfile.red_trc}</td></tr>
         {/if}
-        {#if data.icc_profile.green_trc}
-          <tr><td>Green TRC</td><td>{data.icc_profile.green_trc}</td></tr>
+        {#if iccProfile.green_trc}
+          <tr><td>Green TRC</td><td>{iccProfile.green_trc}</td></tr>
         {/if}
-        {#if data.icc_profile.blue_trc}
-          <tr><td>Blue TRC</td><td>{data.icc_profile.blue_trc}</td></tr>
+        {#if iccProfile.blue_trc}
+          <tr><td>Blue TRC</td><td>{iccProfile.blue_trc}</td></tr>
         {/if}
-        {#if data.icc_profile.luts.length > 0}
-          {#each data.icc_profile.luts as lut}
+        {#if iccProfile.luts.length > 0}
+          {#each iccProfile.luts as lut}
             <tr>
               <td>LUT: {lut.name}</td>
               <td>{lut.input_channels}→{lut.output_channels} channels{#if lut.clut_points !== null}, {lut.clut_points} CLUT points{/if}</td>
@@ -59,10 +79,10 @@
     </section>
 
     <section class="section">
-      <h3>ICC Tags ({data.icc_profile.tag_count})</h3>
+      <h3>ICC Tags ({iccProfile.tag_count})</h3>
       <table class="data-table">
         <tbody>
-        {#each data.icc_profile.tags as tag}
+        {#each iccProfile.tags as tag}
           <tr>
             <td><code>{tag.name}</code></td>
             <td>{tag.tag_type}</td>
@@ -86,11 +106,18 @@
   }
   .section {
     margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
   }
   .section h3 {
-    margin: 0 0 0.5rem;
-    color: var(--color-text, #e2e8f0);
-    font-size: 0.9rem;
+    margin: 0 0 0.75rem;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    font-weight: 600;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-subtle);
   }
   .data-table {
     width: 100%;
@@ -98,20 +125,33 @@
     font-size: 0.8rem;
   }
   .data-table td {
-    padding: 0.35rem 0.5rem;
-    border-bottom: 1px solid var(--color-border, #1e293b);
+    padding: 0.375rem 0.625rem;
+    border-bottom: 1px solid var(--border-subtle);
+    vertical-align: top;
+  }
+  .data-table tbody tr:last-child td {
+    border-bottom: none;
   }
   .data-table td:first-child {
-    color: var(--color-muted, #64748b);
+    color: var(--text-secondary);
     width: 140px;
+    white-space: nowrap;
+  }
+  .data-table td:last-child {
+    color: var(--text-primary);
   }
   code {
-    color: var(--color-accent, #818cf8);
+    color: var(--accent-bright);
     font-family: 'SF Mono', 'Cascadia Code', monospace;
+    font-size: 0.75rem;
+    background: var(--bg-elevated);
+    padding: 0.125rem 0.25rem;
+    border-radius: 3px;
   }
   .no-icc {
-    color: var(--color-muted, #64748b);
+    color: var(--text-secondary);
     text-align: center;
-    padding: 2rem;
+    padding: 3rem 2rem;
+    font-size: 0.875rem;
   }
 </style>

@@ -3,6 +3,7 @@
 
   let { entries }: { entries: MetadataEntry[] } = $props();
 
+  // Auto-expand all standards on mount
   let expandedStandards: Set<string> = $state(new Set());
 
   let grouped: Map<string, MetadataEntry[]> = $derived(
@@ -14,6 +15,15 @@
       return map;
     }, new Map<string, MetadataEntry[]>())
   );
+
+  // Auto-expand when entries change
+  $effect(() => {
+    if (entries.length > 0) {
+      expandedStandards = new Set(grouped.keys());
+    } else {
+      expandedStandards.clear();
+    }
+  });
 
   function toggleStandard(standard: string) {
     if (expandedStandards.has(standard)) {
@@ -94,11 +104,11 @@
 
 <style>
   .metadata-panel {
-    padding: 0.5rem;
+    padding: 0.25rem;
   }
 
   .empty {
-    color: var(--color-muted, #64748b);
+    color: var(--text-secondary);
     text-align: center;
     padding: 2rem;
   }
@@ -110,9 +120,15 @@
   }
 
   .metadata-group {
-    border: 1px solid var(--color-border, #334155);
-    border-radius: 6px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
     overflow: hidden;
+    background: var(--bg-secondary);
+    transition: border-color var(--duration-fast) var(--ease-out-expo);
+  }
+
+  .metadata-group:hover {
+    border-color: var(--border-strong);
   }
 
   .group-header {
@@ -120,24 +136,24 @@
     align-items: center;
     gap: 0.5rem;
     width: 100%;
-    padding: 0.5rem 0.75rem;
-    background: rgba(255, 255, 255, 0.02);
+    padding: 0.625rem 0.875rem;
+    background: var(--bg-tertiary);
     border: none;
     cursor: pointer;
     font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--color-text, #e2e8f0);
-    transition: background var(--duration-fast, 150ms) var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1));
+    color: var(--text-primary);
+    transition: background var(--duration-fast) var(--ease-out-expo);
   }
 
   .group-header:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--bg-elevated);
   }
 
   .group-toggle {
     width: 1em;
     text-align: center;
-    color: var(--color-muted, #64748b);
+    color: var(--text-tertiary);
     flex-shrink: 0;
   }
 
@@ -146,9 +162,14 @@
   }
 
   .group-count {
-    color: var(--color-muted, #64748b);
+    color: var(--text-secondary);
     font-size: 0.75rem;
     font-weight: 400;
+    background: var(--bg-elevated);
+    padding: 0.125rem 0.375rem;
+    border-radius: 10px;
+    min-width: 1.25rem;
+    text-align: center;
   }
 
   .metadata-table {
@@ -159,34 +180,35 @@
   }
 
   .metadata-table thead {
-    border-bottom: 1px solid var(--color-border, #334155);
+    border-bottom: 1px solid var(--border-default);
   }
 
   .metadata-table th {
     text-align: left;
-    padding: 0.375rem 0.75rem;
-    color: var(--color-muted, #64748b);
+    padding: 0.375rem 0.875rem;
+    color: var(--text-tertiary);
     font-weight: 500;
     text-transform: uppercase;
     font-size: 0.6875rem;
     letter-spacing: 0.05em;
+    background: var(--bg-tertiary);
   }
 
   .metadata-table td {
-    padding: 0.375rem 0.75rem;
+    padding: 0.375rem 0.875rem;
     vertical-align: top;
-    border-top: 1px solid rgba(255, 255, 255, 0.03);
+    border-top: 1px solid var(--border-subtle);
   }
 
   .tag-name {
-    color: var(--color-accent, #818cf8);
+    color: var(--accent-bright);
     font-weight: 500;
     width: 12rem;
     min-width: 8rem;
   }
 
   .tag-value {
-    color: var(--color-text, #e2e8f0);
+    color: var(--text-primary);
     word-break: break-word;
   }
 
@@ -203,7 +225,7 @@
   }
 
   .value-row dt {
-    color: var(--color-muted, #64748b);
+    color: var(--text-secondary);
     min-width: 8ch;
     flex-shrink: 0;
   }

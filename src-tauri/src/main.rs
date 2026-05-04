@@ -9,6 +9,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::analyze_image,
             commands::analyze_batch,
+            commands::get_channels,
+            commands::get_icc_profile,
+            commands::get_gif_frames,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
